@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { AVAILABLE_MODELS, MODEL_CATEGORIES, ModelInfo,DEFAULT_MODEL_ID } from '../lib/models';
 
 interface WebLLMConfig {
   model: string;
@@ -11,147 +12,9 @@ interface WebLLMSetupProps {
   currentConfig?: WebLLMConfig;
 }
 
-interface ModelInfo {
-  id: string;
-  name: string;
-  description: string;
-  size: string;
-  category: string;
-  quantization: string;
-  context?: number;
-  new?: boolean;
-}
-
-const AVAILABLE_MODELS: ModelInfo[] = [
-  // Phi 系列
-  {
-    id: "Phi-3.5-mini-instruct-q4f16_1-MLC",
-    name: "Phi-3.5 Mini",
-    description: "轻量级指令模型，适合基本对话和简单任务",
-    size: "2GB",
-    category: "Phi",
-    quantization: "4-bit",
-    context: 2048
-  },
-  {
-    id: "Phi-3.5-instruct-q4f16_1-MLC",
-    name: "Phi-3.5",
-    description: "标准指令模型，适合一般对话和复杂任务",
-    size: "4GB",
-    category: "Phi",
-    quantization: "4-bit",
-    context: 2048
-  },
-  {
-    id: "Phi-3.5-instruct-q8f16_1-MLC",
-    name: "Phi-3.5 (8-bit)",
-    description: "高精度标准指令模型，适合需要更高准确度的任务",
-    size: "6GB",
-    category: "Phi",
-    quantization: "8-bit",
-    context: 2048
-  },
-
-  // Mistral 系列
-  {
-    id: "Mistral-7B-instruct-q4f16_1-MLC",
-    name: "Mistral-7B",
-    description: "高性能指令模型，适合高级对话和专业任务",
-    size: "4GB",
-    category: "Mistral",
-    quantization: "4-bit",
-    context: 4096
-  },
-  {
-    id: "Mistral-7B-instruct-q8f16_1-MLC",
-    name: "Mistral-7B (8-bit)",
-    description: "高精度高性能指令模型，适合要求高准确度的专业任务",
-    size: "7GB",
-    category: "Mistral",
-    quantization: "8-bit",
-    context: 4096
-  },
-
-  // Gemma 系列
-  {
-    id: "Gemma-2b-instruct-q4f16_1-MLC",
-    name: "Gemma-2B",
-    description: "Google 开源的轻量级指令模型，适合快速响应",
-    size: "1.5GB",
-    category: "Gemma",
-    quantization: "4-bit",
-    context: 2048,
-    new: true
-  },
-  {
-    id: "Gemma-7b-instruct-q4f16_1-MLC",
-    name: "Gemma-7B",
-    description: "Google 开源的标准指令模型，平衡性能和资源占用",
-    size: "4GB",
-    category: "Gemma",
-    quantization: "4-bit",
-    context: 4096,
-    new: true
-  },
-  {
-    id: "Gemma-7b-instruct-q8f16_1-MLC",
-    name: "Gemma-7B (8-bit)",
-    description: "Google 开源的高精度标准指令模型",
-    size: "7GB",
-    category: "Gemma",
-    quantization: "8-bit",
-    context: 4096,
-    new: true
-  },
-
-  // Qwen 系列
-  {
-    id: "Qwen1.5-0.5b-instruct-q4f16_1-MLC",
-    name: "Qwen1.5-0.5B",
-    description: "通义千问超轻量级模型，适合移动设备",
-    size: "0.5GB",
-    category: "Qwen",
-    quantization: "4-bit",
-    context: 2048,
-    new: true
-  },
-  {
-    id: "Qwen1.5-1.8b-instruct-q4f16_1-MLC",
-    name: "Qwen1.5-1.8B",
-    description: "通义千问轻量级模型，适合一般对话",
-    size: "1.2GB",
-    category: "Qwen",
-    quantization: "4-bit",
-    context: 2048,
-    new: true
-  },
-  {
-    id: "Qwen1.5-4b-instruct-q4f16_1-MLC",
-    name: "Qwen1.5-4B",
-    description: "通义千问中型模型，适合复杂对话",
-    size: "2.5GB",
-    category: "Qwen",
-    quantization: "4-bit",
-    context: 4096,
-    new: true
-  },
-  {
-    id: "Qwen1.5-7b-instruct-q4f16_1-MLC",
-    name: "Qwen1.5-7B",
-    description: "通义千问标准模型，适合高级任务",
-    size: "4GB",
-    category: "Qwen",
-    quantization: "4-bit",
-    context: 8192,
-    new: true
-  }
-];
-
-const MODEL_CATEGORIES = ["Qwen", "Gemma", "Phi", "Mistral"];
-
 export function WebLLMSetup({ onComplete, onCancel, currentConfig }: WebLLMSetupProps) {
   const [selectedModel, setSelectedModel] = useState<string>(
-    currentConfig?.model || AVAILABLE_MODELS[0].id
+    currentConfig?.model || DEFAULT_MODEL_ID
   );
   const [temperature, setTemperature] = useState<number>(
     currentConfig?.temperature || 0.7
@@ -163,7 +26,6 @@ export function WebLLMSetup({ onComplete, onCancel, currentConfig }: WebLLMSetup
     setIsLoading(true);
 
     try {
-      // 这里可以添加模型验证或预下载逻辑
       const config: WebLLMConfig = {
         model: selectedModel,
         temperature: temperature
@@ -195,10 +57,10 @@ export function WebLLMSetup({ onComplete, onCancel, currentConfig }: WebLLMSetup
           </label>
           <div className="space-y-6">
             {MODEL_CATEGORIES.map((category) => (
-              <div key={category} className="border dark:border-gray-700 rounded-lg p-4">
-                <h3 className="text-lg font-semibold mb-3 text-gray-900 dark:text-white">{category} 系列</h3>
+              <div key={category.id} className="border dark:border-gray-700 rounded-lg p-4">
+                <h3 className="text-lg font-semibold mb-3 text-gray-900 dark:text-white">{category.name} 系列</h3>
                 <div className="space-y-3">
-                  {AVAILABLE_MODELS.filter(model => model.category === category).map((model) => (
+                  {AVAILABLE_MODELS.filter((model: ModelInfo) => model.category === category.id).map((model: ModelInfo) => (
                     <div
                       key={model.id}
                       className={`p-4 rounded-lg border-2 cursor-pointer transition-colors ${
@@ -227,7 +89,7 @@ export function WebLLMSetup({ onComplete, onCancel, currentConfig }: WebLLMSetup
                           <span>|</span>
                           <span>{model.quantization}</span>
                           <span>|</span>
-                          <span>{model.context}k 上下文</span>
+                          <span>{model.contextSize}k 上下文</span>
                         </div>
                       </div>
                       <p className="text-gray-600 dark:text-gray-300 text-sm ml-7">

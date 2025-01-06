@@ -15,6 +15,7 @@ import { OllamaSetup } from '@/components/OllamaSetup';
 import { WebLLMSetup } from '@/components/WebLLMSetup';
 import { ChromeAISetup } from '@/components/ChromeAISetup';
 import { useLocalStorage } from '@/lib/hooks';
+import { DEFAULT_MODEL } from '@/lib/models';
 
 type ModelProvider = "ollama" | "webllm" | "chrome_ai";
 
@@ -59,9 +60,7 @@ const titleTexts: Record<ModelProvider, string> = {
   chrome_ai: "Chrome原生聊天",
 };
 
-export function ChatWindow(props: {
-  placeholder?: string;
-}) {
+export function ChatWindow() {
   const searchParams = useSearchParams()
   const presetProvider = searchParams.get("provider");
   const validModelProviders: ModelProvider[] = ["ollama", "webllm", "chrome_ai"];
@@ -83,10 +82,10 @@ export function ChatWindow(props: {
   
   const [hasShownChromeAISetup, setHasShownChromeAISetup] = useLocalStorage('hasShownChromeAISetup', false);
 
-  const { placeholder } = props;
   const [messages, setMessages] = useState<ChatWindowMessage[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(true);
+  const [isChatting, setIsChatting] = useState(false);
   const [readyToChat, setReadyToChat] = useState(true);
   const [modelProvider, setModelProvider] = useState<ModelProvider>(savedModelProvider);
   const [downloadProgress, setDownloadProgress] = useState(0);
@@ -99,16 +98,50 @@ export function ChatWindow(props: {
   const [agentMessage, setAgentMessage] = useState<AgentMessage | null>(null);
   const [showOllamaSetup, setShowOllamaSetup] = useState(false);
   const [ollamaConfig, setOllamaConfig] = useState<OllamaConfig>({
-    endpoint: 'http://localhost:11435',
+    endpoint: 'http://localhost:11434',
     model: 'qwen2.5:14b'
   });
   const [showWebLLMSetup, setShowWebLLMSetup] = useState(false);
   const [webllmConfig, setWebLLMConfig] = useState<WebLLMConfig>({
-    model: "Phi-3.5-mini-instruct-q4f16_1-MLC",
-    temperature: 0.7
+    model: DEFAULT_MODEL?.id || "Qwen2.5-7B-Instruct-q4f16_1-MLC",
+    temperature: DEFAULT_MODEL?.recommendedConfig?.temperature || 0.7
   });
   const [showChromeAISetup, setShowChromeAISetup] = useState(false);
   const [isClient, setIsClient] = useState(false);
+  const [modelDownloadStatus, setModelDownloadStatus] = useState<Record<string, {
+    progress: number;
+    stage: 'preparing' | 'downloading' | 'loading' | 'complete';
+    message: string;
+  }>>({});
+  const [shouldDelayShow, setShouldDelayShow] = useState(false);
+
+  // 更新显示下载进度的条件判断
+  const shouldShowDownloadProgress = useMemo(() => {
+    return modelProvider === 'webllm' && 
+           modelDownloadStatus[webllmConfig.model] &&  // 只要有状态就显示
+           modelDownloadStatus[webllmConfig.model]?.stage !== 'complete' &&
+           shouldDelayShow;  // 添加延迟显示条件
+  }, [modelProvider, webllmConfig.model, modelDownloadStatus, shouldDelayShow]);
+
+  // 处理下载状态变化
+  useEffect(() => {
+    let showTimer: NodeJS.Timeout;
+    
+    if (modelProvider === 'webllm' && 
+        modelDownloadStatus[webllmConfig.model] && 
+        modelDownloadStatus[webllmConfig.model]?.stage !== 'complete') {
+      // 设置500ms的延迟
+      showTimer = setTimeout(() => {
+        setShouldDelayShow(true);
+      }, 500);
+    } else {
+      setShouldDelayShow(false);
+    }
+
+    return () => {
+      clearTimeout(showTimer);
+    };
+  }, [modelProvider, webllmConfig.model, modelDownloadStatus]);
 
   useEffect(() => {
     setIsClient(true);
@@ -298,24 +331,41 @@ export function ChatWindow(props: {
               const progress = e.data.data?.progress || 0;
               const percentage = Math.round(progress * 100);
               console.log(`⏳ 下载进度: ${percentage}%`, e.data.data);
-              setDownloadProgress(progress);
               
+              let stage: 'preparing' | 'downloading' | 'loading' | 'complete' = 'preparing';
+              let message = '';
+
               if (progress === 0) {
                 console.log('🔍 准备阶段...');
-                setDownloadStage('preparing');
+                stage = 'preparing';
+                message = "正在准备下载环境...";
               } else if (progress < 0.9) {
                 console.log('📥 下载阶段...');
-                setDownloadStage('downloading');
+                stage = 'downloading';
+                message = "正在下载模型文件...";
               } else if (progress < 1) {
                 console.log('⚡ 加载阶段...');
-                setDownloadStage('loading');
+                stage = 'loading';
+                message = "正在加载模型到内存...";
               } else {
                 console.log('✨ 完成！');
-                setDownloadStage('complete');
-                setTimeout(() => {
-                  setDownloadProgress(0);
-                }, 2000);
+                stage = 'complete';
+                message = "";
+                setShouldDelayShow(false);  // 完成时立即隐藏
               }
+
+              if (e.data.data?.text) {
+                message = e.data.data.text;
+              }
+
+              setModelDownloadStatus(prev => ({
+                ...prev,
+                [webllmConfig.model]: {
+                  progress,
+                  stage,
+                  message
+                }
+              }));
               break;
             case "chunk":
               console.log('📨 收到响应片段');
@@ -342,7 +392,7 @@ export function ChatWindow(props: {
   async function sendMessage(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
-    if (isLoading || !input) {
+    if (isChatting || !input) {
       return;
     }
 
@@ -357,13 +407,24 @@ export function ChatWindow(props: {
       }
     }
 
+    if (modelProvider === 'webllm' && 
+        modelDownloadStatus[webllmConfig.model]?.stage !== 'complete' && 
+        modelDownloadStatus[webllmConfig.model]?.progress > 0) {
+      setAgentMessage({
+        type: 'warning',
+        title: '模型准备中',
+        content: '模型正在下载中，请等待下载完成后再开始对话。'
+      });
+      return;
+    }
+
     console.log('📤 准备发送消息...');
     const initialInput = input;
     const initialMessages = [...messages];
     const newMessages = [...initialMessages, { role: "user" as const, content: input }];
 
     setMessages(newMessages)
-    setIsLoading(true);
+    setIsChatting(true);
     setInput("");
 
     try {
@@ -387,11 +448,11 @@ export function ChatWindow(props: {
       }
 
       console.log('✅ 请求处理完成');
-      setIsLoading(false);
+      setIsChatting(false);
     } catch (error: any) {
       console.error('❌ 请求失败:', error);
       setMessages(initialMessages);
-      setIsLoading(false);
+      setIsChatting(false);
       setInput(initialInput);
       
       if (modelProvider === 'ollama') {
@@ -408,7 +469,6 @@ export function ChatWindow(props: {
           content: '当前 Chrome AI 模型不支持中文输出。请尝试使用英文进行对话，或切换到其他模型。'
         });
       } else {
-        // 根据错误消息类型设置不同的提示
         const isWarning = error.message.includes('不支持') || 
                          error.message.includes('不可用') ||
                          error.message.includes('未准备好');
@@ -576,13 +636,13 @@ export function ChatWindow(props: {
             </div>
           )}
 
-          {downloadProgress > 0 && (
+          {shouldShowDownloadProgress && (
             <div className="w-full max-w-2xl mb-4">
               <DownloadProgress 
-                progress={downloadProgress} 
-                stage={downloadStage}
-                modelName={modelProvider === 'webllm' ? 'Phi-3.5' : 'Qwen2.5-14B'}
-                text={downloadMessage}
+                progress={modelDownloadStatus[webllmConfig.model]?.progress || 0}
+                stage={modelDownloadStatus[webllmConfig.model]?.stage || 'preparing'}
+                modelName={webllmConfig.model}
+                text={modelDownloadStatus[webllmConfig.model]?.message || ''}
               />
             </div>
           )}
@@ -615,15 +675,15 @@ export function ChatWindow(props: {
               <input
                 className="grow rounded p-4 text-gray-900 dark:text-gray-100 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                 value={input}
-                placeholder={placeholder ?? "输入你的问题..."}
+                placeholder={"输入你的需求..."}
                 onChange={(e: ChangeEvent<HTMLInputElement>) => setInput(e.target.value)}
               />
               <button
                 type="submit"
                 className="px-8 py-4 rounded bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                disabled={isLoading}
+                disabled={isChatting}
               >
-                {isLoading ? "思考中..." : "发送"}
+                {isChatting ? "思考中..." : "发送"}
               </button>
             </form>
           </div>

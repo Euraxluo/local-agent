@@ -1,8 +1,9 @@
 import { ChatOllama } from "@langchain/ollama";
 import { ChatWindowMessage } from "@/schema/ChatWindowMessage";
 import { HumanMessage, AIMessage } from "@langchain/core/messages";
-import { CreateMLCEngine, MLCEngine, type MLCEngineConfig } from "@mlc-ai/web-llm";
+import { ChatWebLLM } from "@langchain/community/chat_models/webllm";
 import { ChromeAI } from "@langchain/community/experimental/llms/chrome_ai";
+import { AVAILABLE_MODELS } from "@/lib/models";
 
 interface WorkerMessage {
   messages: ChatWindowMessage[];
@@ -24,7 +25,8 @@ interface ProgressCallback {
 }
 
 // 保存 WebLLM 实例以便重用
-let webllmInstance: MLCEngine | null = null;
+let webllmInstance: ChatWebLLM | null = null;
+let currentModelId: string | null = null;
 
 // Chrome AI 相关函数
 let chromeAIInstance: ChromeAI | null = null;
@@ -42,17 +44,6 @@ Assistant:`;
 
 async function initializeChromeAI() {
   try {
-    // // @ts-ignore
-    // if (!globalThis?.chrome?.ml) {
-    //   throw new Error('Chrome AI API (chrome.ml) 不可用');
-    // }
-
-    // // 检查 generateText 功能
-    // // @ts-ignore
-    // if (typeof globalThis.chrome.ml.generateText !== 'function') {
-    //   throw new Error('Chrome AI 文本生成功能不可用');
-    // }
-
     // 尝试创建实例
     if (!chromeAIInstance) {
       chromeAIInstance = new ChromeAI();
@@ -171,38 +162,59 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
       console.log('正在初始化 WebLLM...', modelConfig.model);
       
       try {
-        // 如果没有实例或者模型改变了，创建新的实例
-        if (!webllmInstance) {
-          webllmInstance = await CreateMLCEngine(modelConfig.model, {
-            initProgressCallback: (progress: any) => {
-              console.log('WebLLM 初始化进度:', progress);
-              self.postMessage({
-                type: "init_progress",
-                data: {
-                  progress: typeof progress === 'number' ? progress : (progress.progress || 0),
-                  text: typeof progress === 'object' ? progress.text : '正在加载模型...'
-                }
-              });
-            }
-          });
+        // 检查模型是否存在于配置中
+        const modelInfo = AVAILABLE_MODELS.find(m => m.id === modelConfig.model);
+        if (!modelInfo) {
+          throw new Error(`找不到模型配置: ${modelConfig.model}`);
         }
 
-        // 使用 WebLLM 的 chat.completions.create 方法
-        const response = await webllmInstance.chat.completions.create({
-          messages: messages.map(msg => ({
-            role: msg.role,
-            content: msg.content
-          })),
-          stream: true,
-          model: modelConfig.model,
-          temperature: modelConfig.temperature
+        // 如果没有实例或者模型改变了，创建新的实例
+        if (!webllmInstance || currentModelId !== modelConfig.model) {
+          // 清理旧实例
+          if (webllmInstance) {
+            webllmInstance = null;
+          }
+
+          // 创建新实例
+          webllmInstance = new ChatWebLLM({
+            model: modelConfig.model,
+            chatOptions: {
+              temperature: modelConfig.chatOptions?.temperature ?? 0.7,
+            },
+          });
+
+          // 初始化模型并显示进度
+          await webllmInstance.initialize((progress: Record<string, unknown>) => {
+            console.log('WebLLM 初始化进度:', progress);
+            self.postMessage({
+              type: "init_progress",
+              data: {
+                progress: typeof progress.progress === 'number' ? progress.progress : 0,
+                text: progress.text?.toString() || '正在加载模型...'
+              }
+            });
+          });
+
+          currentModelId = modelConfig.model;
+        }
+
+        // 转换消息格式
+        const formattedMessages = messages.map(msg => {
+          if (msg.role === 'user') {
+            return new HumanMessage(msg.content);
+          } else {
+            return new AIMessage(msg.content);
+          }
         });
 
-        for await (const chunk of response) {
-          if (chunk.choices && chunk.choices[0]?.delta?.content) {
+        // 使用流式输出
+        const stream = await webllmInstance.stream(formattedMessages);
+        
+        for await (const chunk of stream) {
+          if (chunk.content) {
             self.postMessage({
               type: "chunk",
-              data: chunk.choices[0].delta.content,
+              data: chunk.content,
             });
           }
         }
@@ -210,6 +222,7 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
         console.error('WebLLM error:', error);
         // 如果发生错误，清除实例
         webllmInstance = null;
+        currentModelId = null;
         throw error;
       }
     } else if (modelProvider === 'ollama') {
